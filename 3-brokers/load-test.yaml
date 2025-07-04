@@ -1,0 +1,183 @@
+# High-Throughput Producer Load Test
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: performance-data-producer
+  labels:
+    app: kafka-load-testing
+    component: data-producer
+    test-type: performance
+spec:
+  parallelism: 5
+  completions: 5
+  backoffLimit: 2
+  template:
+    metadata:
+      name: performance-data-producer
+      labels:
+        app: kafka-load-testing
+        component: data-producer
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-producer-engine
+        image: quay.io/strimzi/kafka:0.46.0-kafka-4.0.0
+        command: [ "bin/kafka-producer-perf-test.sh" ]
+        args: [ 
+          "--topic", "performance-analytics-topic", 
+          "--throughput", "1000000000", 
+          "--num-records", "1000000000", 
+          "--producer-props", 
+          "acks=all", 
+          "bootstrap.servers=scalable-kafka-cluster-kafka-bootstrap:9093", 
+          "security.protocol=SSL", 
+          "ssl.truststore.type=PKCS12", 
+          "ssl.truststore.password=$(CLUSTER_CA_PASSWORD)", 
+          "ssl.truststore.location=/etc/kafka-certs/ca.p12", 
+          "--record-size", "1024" 
+        ]
+        volumeMounts:
+        - name: kafka-cluster-ca
+          readOnly: true
+          mountPath: "/etc/kafka-certs"
+        env:
+        - name: CLUSTER_CA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: scalable-kafka-cluster-cluster-ca-cert
+              key: ca.password
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: kafka-cluster-ca
+        secret:
+          secretName: scalable-kafka-cluster-cluster-ca-cert
+---
+# Primary Consumer Group Load Test
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: analytics-data-consumer
+  labels:
+    app: kafka-load-testing
+    component: data-consumer
+    test-type: analytics
+spec:
+  parallelism: 5
+  completions: 5
+  backoffLimit: 2
+  template:
+    metadata:
+      name: analytics-data-consumer
+      labels:
+        app: kafka-load-testing
+        component: data-consumer
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-consumer-engine
+        image: quay.io/strimzi/kafka:0.46.0-kafka-4.0.0
+        command: [ "/bin/sh" ]
+        args: [ 
+          "-c", 
+          "echo 'security.protocol=SSL' > /tmp/consumer.config; 
+           echo 'ssl.truststore.type=PKCS12' >> /tmp/consumer.config; 
+           echo 'ssl.truststore.location=/etc/kafka-certs/ca.p12' >> /tmp/consumer.config; 
+           echo 'ssl.truststore.password=$(CLUSTER_CA_PASSWORD)' >> /tmp/consumer.config; 
+           bin/kafka-consumer-perf-test.sh 
+           --topic performance-analytics-topic 
+           --messages 1000000000 
+           --bootstrap-server scalable-kafka-cluster-kafka-bootstrap:9093 
+           --show-detailed-stats 
+           --timeout 300000 
+           --group analytics-consumer-group 
+           --consumer.config /tmp/consumer.config" 
+        ]
+        volumeMounts:
+        - name: kafka-cluster-ca
+          readOnly: true
+          mountPath: "/etc/kafka-certs"
+        env:
+        - name: CLUSTER_CA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: scalable-kafka-cluster-cluster-ca-cert
+              key: ca.password
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: kafka-cluster-ca
+        secret:
+          secretName: scalable-kafka-cluster-cluster-ca-cert
+---
+# Secondary Consumer Group for Event Processing
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: event-processing-consumer
+  labels:
+    app: kafka-load-testing
+    component: event-processor
+    test-type: streaming
+spec:
+  parallelism: 3
+  completions: 3
+  backoffLimit: 2
+  template:
+    metadata:
+      name: event-processing-consumer
+      labels:
+        app: kafka-load-testing
+        component: event-processor
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-event-processor
+        image: quay.io/strimzi/kafka:0.46.0-kafka-4.0.0
+        command: [ "/bin/sh" ]
+        args: [ 
+          "-c", 
+          "echo 'security.protocol=SSL' > /tmp/consumer.config; 
+           echo 'ssl.truststore.type=PKCS12' >> /tmp/consumer.config; 
+           echo 'ssl.truststore.location=/etc/kafka-certs/ca.p12' >> /tmp/consumer.config; 
+           echo 'ssl.truststore.password=$(CLUSTER_CA_PASSWORD)' >> /tmp/consumer.config; 
+           bin/kafka-consumer-perf-test.sh 
+           --topic event-stream-topic 
+           --messages 500000000 
+           --bootstrap-server scalable-kafka-cluster-kafka-bootstrap:9093 
+           --show-detailed-stats 
+           --timeout 300000 
+           --group event-processing-group 
+           --consumer.config /tmp/consumer.config" 
+        ]
+        volumeMounts:
+        - name: kafka-cluster-ca
+          readOnly: true
+          mountPath: "/etc/kafka-certs"
+        env:
+        - name: CLUSTER_CA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: scalable-kafka-cluster-cluster-ca-cert
+              key: ca.password
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: kafka-cluster-ca
+        secret:
+          secretName: scalable-kafka-cluster-cluster-ca-cert

@@ -1,0 +1,188 @@
+# Auto-Scaling Kafka Cluster with Tiered Storage
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: scalable-kafka-cluster
+  labels:
+    app: kafka-autoscale
+    environment: production
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    image: quay.io/scholzj/kafka:0.46.0-tiered-storage-kafka-4.0.0
+    listeners:
+      - name: internal
+        port: 9092
+        type: internal
+        tls: false
+      - name: secure
+        port: 9093
+        type: internal
+        tls: true
+    config:
+      # Topic management
+      auto.create.topics.enable: "false"
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      # Performance tuning
+      log.retention.check.interval.ms: 10000
+      # Cruise Control integration
+      cruise.control.metrics.reporter.metrics.reporting.interval.ms: 5000
+      cruise.control.metrics.reporter.metadata.max.age.ms: 5000
+      cruise.control.metrics.topic.replication.factor: 1
+      cruise.control.metrics.topic.min.insync.replicas: 1
+      # Tiered storage configuration
+      remote.log.manager.task.interval.ms: 5000
+    tieredStorage:
+      type: custom
+      remoteStorageManager:
+        className: io.aiven.kafka.tieredstorage.RemoteStorageManager
+        classPath: /opt/kafka/tiered-storage-filesystem/*
+        config:
+          storage.backend.class: io.aiven.kafka.tieredstorage.storage.filesystem.FileSystemStorage
+          storage.root: /mnt/tiered-storage/
+          storage.overwrite.enabled: "true"
+          chunk.size: "4194304" # 4 MiB chunks
+  # Entity Operator for topic and user management
+  entityOperator:
+    topicOperator:
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: "0.2"
+        limits:
+          memory: 256Mi
+          cpu: "0.5"
+    userOperator:
+      resources:
+        requests:
+          memory: 512Mi
+          cpu: "0.2"
+        limits:
+          memory: 512Mi
+          cpu: "0.5"
+  # Cruise Control for auto-rebalancing
+  cruiseControl:
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 500m
+      limits:
+        memory: 1Gi
+        cpu: 1000m
+    config:
+      max.active.user.tasks: 10
+      metric.sampling.interval.ms: 5000
+      metadata.max.age.ms: 5000
+      sample.store.topic.replication.factor: 1
+      partition.sample.store.topic.partition.count: 1
+      broker.sample.store.topic.partition.count: 1
+      skip.sample.store.topic.rack.awareness.check: true
+      partition.metrics.window.ms: 10000
+      broker.metrics.window.ms: 10000
+      monitor.state.update.interval.ms: 10000
+      cruise.control.metrics.reporter.metrics.reporting.interval.ms: 5000
+    autoRebalance:
+      - mode: add-brokers
+        template:
+          name: kafka-cluster-rebalance-template
+      - mode: remove-brokers
+        template:
+          name: kafka-cluster-rebalance-template
+---
+# Controller Node Pool - Manages cluster metadata
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: control-plane
+  labels:
+    strimzi.io/cluster: scalable-kafka-cluster
+  annotations:
+    strimzi.io/next-node-ids: "[0-9]"
+    strimzi.io/remove-node-ids: "[9-0]"
+spec:
+  roles:
+    - controller
+  replicas: 3
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+  jvmOptions:
+    -Xms: 1024m
+    -Xmx: 1024m
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 100Gi
+        deleteClaim: true
+---
+# Broker Node Pool - Handles data storage and processing
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: data-brokers
+  labels:
+    strimzi.io/cluster: scalable-kafka-cluster
+  annotations:
+    strimzi.io/next-node-ids: "[10-99]"
+    strimzi.io/remove-node-ids: "[99-10]"
+spec:
+  roles:
+    - broker
+  replicas: 3
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+  jvmOptions:
+    -Xms: 1024m
+    -Xmx: 1024m
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 100Gi
+        deleteClaim: true
+  template:
+    pod:
+      volumes:
+        - name: tiered-storage
+          persistentVolumeClaim:
+            claimName: tiered-storage-nfs
+    kafkaContainer:
+      volumeMounts:
+        - name: tiered-storage
+          mountPath: /mnt/tiered-storage/
+---
+# Auto-Rebalancing Template
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaRebalance
+metadata:
+  name: kafka-cluster-rebalance-template
+  annotations:
+    strimzi.io/rebalance-template: "true"
+spec:
+  skipHardGoalCheck: true
+  goals:
+    - LeaderReplicaDistributionGoal
+    - LeaderBytesInDistributionGoal
+    - DiskUsageDistributionGoal
+    - CpuUsageDistributionGoal
+    - ReplicaDistributionGoal
+    - NetworkInboundUsageDistributionGoal
+    - NetworkOutboundUsageDistributionGoal

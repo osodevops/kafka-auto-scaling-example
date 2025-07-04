@@ -1,0 +1,58 @@
+# High-Performance Topic for Load Testing and Analytics
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: performance-analytics-topic
+  labels:
+    strimzi.io/cluster: scalable-kafka-cluster
+    app: kafka-autoscale
+    environment: production
+    topic-type: high-throughput
+spec:
+  partitions: 100
+  replicas: 3
+  config:
+    # Durability and consistency
+    min.insync.replicas: 2
+    # Storage management with tiered storage
+    retention.bytes: 10737418240 # ~10 GiB total retention
+    retention.ms: 7200000 # 2 hours retention
+    segment.bytes: 10485760 # ~10MB segments for optimal performance
+    file.delete.delay.ms: 1000
+    # Tiered storage optimization
+    remote.storage.enable: true
+    local.retention.ms: 60000 # Keep 1 minute locally
+    local.retention.bytes: 50000000 # 50 MB local storage
+    # Performance tuning
+    compression.type: lz4
+    cleanup.policy: delete
+    max.message.bytes: 1048576 # 1MB max message size
+---
+# Secondary Topic for Event Streaming
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: event-stream-topic
+  labels:
+    strimzi.io/cluster: scalable-kafka-cluster
+    app: kafka-autoscale
+    environment: production
+    topic-type: event-streaming
+spec:
+  partitions: 50
+  replicas: 3
+  config:
+    # Balanced configuration for event streaming
+    min.insync.replicas: 2
+    retention.bytes: 5368709120 # ~5 GiB
+    retention.ms: 14400000 # 4 hours retention
+    segment.bytes: 5242880 # ~5MB segments
+    file.delete.delay.ms: 2000
+    # Tiered storage for cost efficiency
+    remote.storage.enable: true
+    local.retention.ms: 120000 # Keep 2 minutes locally
+    local.retention.bytes: 25000000 # 25 MB local storage
+    # Optimized for streaming workloads
+    compression.type: snappy
+    cleanup.policy: delete
+    max.message.bytes: 524288 # 512KB max message size

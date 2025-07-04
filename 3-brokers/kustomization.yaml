@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base/strimzi-kafka-operator/0.46.0/crds
+  - ../base/strimzi-kafka-operator/0.46.0/templates
+  - namespace.yaml
+  - role.yaml
+  - rolebinding.yaml
+  - kafka.yaml
+  - topics.yaml
+  - autoscale.yaml
+  - load-test.yaml
+
+namespace: three-brokers

@@ -1,0 +1,52 @@
+# Horizontal Pod Autoscaler for Kafka Broker Scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kafka-broker-autoscaler
+  labels:
+    app: kafka-autoscale
+    component: broker-scaling
+    environment: production
+spec:
+  scaleTargetRef:
+    apiVersion: kafka.strimzi.io/v1beta2
+    kind: KafkaNodePool
+    name: data-brokers
+  minReplicas: 3
+  maxReplicas: 8
+  metrics:
+    # CPU-based scaling
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75
+    # Memory-based scaling for comprehensive resource management
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 180
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 180
+        - type: Percent
+          value: 50
+          periodSeconds: 300
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      selectPolicy: Min
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 600
+        - type: Percent
+          value: 25
+          periodSeconds: 900
